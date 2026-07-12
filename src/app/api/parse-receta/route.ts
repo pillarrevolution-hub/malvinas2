@@ -25,7 +25,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (!texto.trim()) {
-      return NextResponse.json({ error: 'No se pudo extraer texto' }, { status: 400 });
+      return NextResponse.json(
+        {
+          error:
+            'Este PDF no tiene texto embebido (es una imagen escaneada). Usá el modo "Pegar texto": pasale la receta a una IA y pegá acá el resultado.',
+        },
+        { status: 400 }
+      );
     }
     return NextResponse.json(parseReceta(texto));
   } catch (e) {

@@ -84,7 +84,9 @@ export default function LectorRecetas({
           capsulasPorTomaManual: false,
           capas: capasConExtrusion,
           dias: f.dias,
-          capsulasTotales: capsulasSugeridas(f.dias, res.capsulasPorToma),
+          capsulasTotales: f.totalCapsulas
+            ? f.totalCapsulas * res.capsulasPorToma
+            : capsulasSugeridas(f.dias, res.capsulasPorToma),
           lotePrefijo: 'PT001',
           loteNumero: numero++,
           fechaElab,
