@@ -1,37 +1,124 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
-import { registrosPi } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { faltantesPI } from '@/lib/validation';
+'use client';
+import { useCallback, useEffect, useState } from 'react';
+import type { Registro, RegistroPi, Tinta } from '@/db/schema';
+import { APP } from '@/lib/config';
+import LectorRecetas from '@/components/LectorRecetas';
+import EnProceso from '@/components/EnProceso';
+import ProductoIntermedio from '@/components/ProductoIntermedio';
+import Terminados from '@/components/Terminados';
+import Admin from '@/components/Admin';
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const [row] = await db.select().from(registrosPi).where(eq(registrosPi.id, Number(params.id)));
-  if (!row) return NextResponse.json({ error: 'No existe' }, { status: 404 });
-  return NextResponse.json(row);
-}
+export type Catalogos = {
+  tintas: Tinta[];
+  excipientes: { id: number; nombre: string }[];
+  medicos: { id: number; nombre: string; matricula: string }[];
+  pacientes: { id: number; nombre: string; dni: string }[];
+  operadores: { id: number; nombre: string; rol: string }[];
+};
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  const id = Number(params.id);
-  const body = await req.json();
-  const terminar = req.nextUrl.searchParams.get('terminar') === '1';
+const TABS = [
+  { id: 'lector', label: '📄 Lector de recetas' },
+  { id: 'pt', label: '💊 Producto Terminado' },
+  { id: 'pi', label: '🧪 Producto Intermedio' },
+  { id: 'terminados', label: '✅ Terminados' },
+  { id: 'gestion', label: '🗂️ Gestión' },
+] as const;
 
-  delete body.id;
-  delete body.createdAt;
-  body.updatedAt = new Date();
+export default function Home() {
+  const [tab, setTab] = useState<string>('pt');
+  const [registros, setRegistros] = useState<Registro[]>([]);
+  const [registrosPi, setRegistrosPi] = useState<RegistroPi[]>([]);
+  const [catalogos, setCatalogos] = useState<Catalogos | null>(null);
+  const [online, setOnline] = useState(true);
 
-  if (terminar) {
-    const faltan = faltantesPI(body);
-    if (faltan) {
-      return NextResponse.json({ error: 'Registro incompleto', faltantes: faltan }, { status: 422 });
+  const recargar = useCallback(async () => {
+    try {
+      const [r, rpi, c] = await Promise.all([
+        fetch('/api/registros').then((x) => x.json()),
+        fetch('/api/registros-pi').then((x) => x.json()),
+        fetch('/api/catalogos').then((x) => x.json()),
+      ]);
+      if (Array.isArray(r)) setRegistros(r);
+      if (Array.isArray(rpi)) setRegistrosPi(rpi);
+      if (c && !c.error) setCatalogos(c);
+      setOnline(true);
+    } catch {
+      setOnline(false);
     }
-    body.estado = 'terminado';
-  }
+  }, []);
 
-  const [row] = await db.update(registrosPi).set(body).where(eq(registrosPi.id, id)).returning();
-  return NextResponse.json(row);
-}
+  useEffect(() => {
+    recargar();
+    const on = () => { setOnline(true); recargar(); };
+    const off = () => setOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, [recargar]);
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  await db.delete(registrosPi).where(eq(registrosPi.id, Number(params.id)));
-  return NextResponse.json({ ok: true });
+  const ptProceso = registros.filter((r) => r.estado === 'en_proceso');
+  const piProceso = registrosPi.filter((r) => r.estado === 'en_proceso');
+  const ptTerm = registros.filter((r) => r.estado === 'terminado');
+  const piTerm = registrosPi.filter((r) => r.estado === 'terminado');
+
+  return (
+    <main className="mx-auto max-w-[1500px] p-4">
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-700 text-2xl">💊</div>
+          <div>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">{APP.nombre}</h1>
+            <p className="text-sm text-slate-500">{APP.subtitulo}</p>
+          </div>
+        </div>
+        {!online && (
+          <span className="badge bg-amber-100 text-amber-800">
+            ⚠ Sin conexión — los cambios se guardan localmente
+          </span>
+        )}
+      </header>
+
+      <nav className="mb-5 flex flex-wrap gap-2">
+        {TABS.map((t) => {
+          const count = t.id === 'pt' ? ptProceso.length : t.id === 'pi' ? piProceso.length : 0;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+                tab === t.id
+                  ? 'bg-teal-700 text-white shadow-sm'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {t.label}
+              {count > 0 && (
+                <span className={`ml-2 rounded-full px-2 text-xs ${tab === t.id ? 'bg-white/25' : 'bg-teal-50 text-teal-700'}`}>
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      {tab === 'lector' && catalogos && (
+        <LectorRecetas catalogos={catalogos} onCreados={() => { recargar(); setTab('pt'); }} />
+      )}
+      {tab === 'pt' && catalogos && (
+        <EnProceso registros={ptProceso} catalogos={catalogos} onCambio={recargar} />
+      )}
+      {tab === 'pi' && catalogos && (
+        <ProductoIntermedio registros={piProceso} catalogos={catalogos} onCambio={recargar} />
+      )}
+      {tab === 'terminados' && (
+        <Terminados registros={ptTerm} registrosPi={piTerm} onCambio={recargar} />
+      )}
+      {tab === 'gestion' && catalogos && <Admin catalogos={catalogos} onCambio={recargar} />}
+      {!catalogos && <p className="text-slate-500">Cargando…</p>}
+    </main>
+  );
 }
